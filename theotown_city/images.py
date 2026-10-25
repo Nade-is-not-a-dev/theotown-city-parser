@@ -3,6 +3,13 @@ from pathlib import Path
 
 from .format import correct_rgba, load_city
 
+# Marker colours for the overlay map.
+TREE_COLOUR = (0, 128, 0)        # dark green dot
+ROAD_COLOUR = (40, 40, 40)       # near-black
+BUILDING_COLOUR = (255, 0, 0)    # red
+BUS_STOP_COLOUR = (255, 165, 0)  # orange
+RAIL_COLOUR = (128, 0, 128)      # purple
+
 
 def _image_from_raw(raw, w, h, white_bg=False):
     from PIL import Image
@@ -44,3 +51,44 @@ def export_images(path, outdir):
     ppg = outdir / f"{stem}_preview_game.png"
     imgp.save(ppg)
     return str(mp), str(pp), str(mpg), str(ppg)
+
+
+def export_overlay(path, outdir, scale=4):
+    """Draw trees, roads, buildings, rails and bus stops on the minimap.
+
+    The minimap is scaled up (default 4x, so 256 -> 1024) and each
+    object is drawn as a small square at its (x, y) tile:
+    trees dark green, roads near-black, buildings red,
+    bus stops orange, rails purple. Returns the overlay file path.
+    """
+    from .analysis import analyse
+    from PIL import Image, ImageDraw
+    r = analyse(path)
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    stem = Path(path).stem
+    w, h = r["minimap_size"]
+    c = load_city(path)
+    img = _image_from_raw(c["minimap"], w, h).convert("RGB")
+    img = img.resize((w * scale, h * scale), Image.NEAREST)
+    draw = ImageDraw.Draw(img)
+    objs = r["objects"]
+
+    def mark(items, colour, size=3):
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            x, y = it.get("x"), it.get("y")
+            if not isinstance(x, int) or not isinstance(y, int):
+                continue
+            px, py = x * scale, y * scale
+            draw.rectangle([px, py, px + size - 1, py + size - 1], fill=colour)
+
+    mark(objs["roads"], ROAD_COLOUR, size=scale)
+    mark(objs["rails"], RAIL_COLOUR, size=scale)
+    mark(objs["trees"], TREE_COLOUR, size=2)
+    mark(objs["bus_stops"], BUS_STOP_COLOUR, size=scale)
+    mark(objs["buildings"], BUILDING_COLOUR, size=scale)
+    out = outdir / f"{stem}_overlay.png"
+    img.save(out)
+    return str(out)

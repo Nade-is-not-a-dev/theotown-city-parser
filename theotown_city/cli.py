@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from .analysis import analyse
-from .images import export_images
+from .images import export_images, export_overlay
 
 
 def _print_info(r, f):
@@ -23,6 +23,8 @@ def _print_info(r, f):
     print(f"  ground types: {r['ground_types_from_ground_arr']}")
     print(f"  heights: { {k: (v['count'], v['min'], v['max'], v['int16_entries']) for k, v in r['heights_arrays'].items()} }")
     print(f"  approx: {r['approx_counts_heuristic']}")
+    for name in ["trees", "roads", "buildings", "rails", "bus_stops"]:
+        print(f"  {name}: {r['objects'][name + '_summary']}")
 
 
 def _write_report(files, out):
@@ -41,6 +43,8 @@ def _write_report(files, out):
         lines.append(f"- Ground types from ground arr: `{r['ground_types_from_ground_arr']}`\n")
         lines.append(f"- Heights: `{ {k: (v['count'], v['min'], v['max'], v['int16_entries']) for k, v in r['heights_arrays'].items()} }`\n")
         lines.append(f"- Approx (heuristic): `{r['approx_counts_heuristic']}`\n")
+        for name in ["trees", "roads", "buildings", "rails", "bus_stops"]:
+            lines.append(f"- {name}: `{r['objects'][name + '_summary']}`\n")
         lines.append("")
     Path(out).write_text("\n".join(lines), encoding="utf-8")
     print(f"wrote {out}")
@@ -69,7 +73,8 @@ def main(argv=None):
     elif args.cmd == "export-images":
         for f in args.files:
             mp, pp, mpg, ppg = export_images(f, args.out)
-            print(f"{f} -> {mp}, {pp}, {mpg}, {ppg}")
+            ov = export_overlay(f, args.out)
+            print(f"{f} -> {mp}, {pp}, {mpg}, {ppg}, {ov}")
     elif args.cmd == "report":
         _write_report(args.files, args.out)
 

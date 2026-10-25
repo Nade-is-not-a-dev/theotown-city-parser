@@ -47,9 +47,13 @@ gzip payload:
 The JSON header is plain text and holds the seed, size, version, game mode,
 money, habitants, and the plugins used.
 
-The main object uses a tagged binary format (tags `0x01`-`0x16`, plus
-reference ids `0x14`/`0x17`). Only scalar fields are read by key search;
-there is no full object-graph parser yet.
+The main object uses a tagged binary format. Every new string is
+stored once, in order, and later uses are a 1-byte reference
+(tag `0x14` for keys, `0x17` for values) or a 2-byte reference
+(tag `0x15`); tag `0x18` is a short string. The parser in
+`objects.py` first builds that string table, then reads objects
+with it — that is how trees, roads and buildings are decoded,
+and why reference ids differ between files.
 
 ## Colour gotcha: pixels are A,B,G,R
 
@@ -66,14 +70,19 @@ and B (`format.correct_rgba`), so the exported PNGs match the game.
 Water share from the corrected minimap also matches the `$water00`
 tile count for every map tested.
 
-## What it does
+## What it does (v1.2)
 
 - Header JSON, money, seed, size, version, id, timestamps
 - Minimap + preview PNG export, in true colours
 - Scalar fields from the main object (width, height, xp, estate, taxes, ...)
 - Heights / heightsDX / heightsDY arrays (raw tagged values)
 - Ground-type counts from `ground arr` (independent terrain check)
-- Approximate tree / building counts (object-start heuristic)
+- Trees, roads, buildings, rails and bus stops, fully parsed
+  (type, x, y) via the string-table parser in `objects.py`
+- Overlay map: trees, roads, buildings, rails and bus stops drawn
+  on the minimap (`*_overlay.png`, trees green, roads black,
+  buildings red, bus stops orange, rails purple)
+
 
 ## What it does not do
 

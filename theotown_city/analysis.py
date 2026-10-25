@@ -8,6 +8,7 @@ from collections import Counter
 
 from .format import find_key_value, find_section, load_city, parse_tagged_int_array
 from .ground import parse_ground_types
+from .objects import build_string_table, parse_objects
 
 
 def classify_terrain(r, g, b):
@@ -111,18 +112,12 @@ def analyse(path):
         off = find_section(dec, key)
         sections[key] = off if off >= 0 else None
 
-    # Trees / buildings: count of object-start bytes (heuristic, not a parse).
-    trees_off = find_section(dec, "trees")
+    # Things on the map: trees, roads, buildings, rails, bus stops.
+    # The string table is built once and shared by all section parsers.
+    strings = build_string_table(dec, obj_off)
+    objects = parse_objects(dec, strings)
     roads_off = find_section(dec, "roads")
-    bld_off = find_section(dec, "buildings")
-    date_off = find_section(dec, "date")
-    trees_sec = dec[trees_off:roads_off] if trees_off >= 0 and roads_off > trees_off else b""
-    bld_sec = dec[bld_off:date_off] if bld_off >= 0 and date_off > bld_off else b""
     approx = {
-        "trees_object_starts_03_14_0d": trees_sec.count(b"\x03\x14\x0d"),
-        "trees_section_len": len(trees_sec),
-        "buildings_object_starts_03_14_0d": bld_sec.count(b"\x03\x14\x0d"),
-        "buildings_section_len": len(bld_sec),
         "roads_empty_array": (
             dec[roads_off + 3 + len("roads"):roads_off + 3 + len("roads") + 2] == b"\x01\x02"
             if roads_off >= 0 else None
@@ -145,11 +140,13 @@ def analyse(path):
         "sections_offsets_in_decompressed": sections,
         "heights_arrays": _heights(dec),
         "approx_counts_heuristic": approx,
-        "ground_types_from_ground_arr": parse_ground_types(dec),
+        "ground_types_from_ground_arr": parse_ground_types(dec, strings),
+        "objects": objects,
         "notes": [
             "Header money should match budget.estate in the main object.",
             "Heights look delta-encoded per row; int16 entries at multiples of 256 are likely row-start absolute heights — hypothesis, not verified.",
-            "Trees/buildings counts are object-start heuristics (03 14 0d), not a full parse.",
+            "Trees/roads/buildings are fully parsed (type, x, y) via the string-table parser in objects.py. "
+            "88 tree entries in the test city have no type string, only f/x/y — reported as '<no type>'.",
             "Minimap/preview pixels are A,B,G,R, not A,R,G,B. Yellow in the raw reading is water, blue in the raw reading is sand/land.",
             "This tool is READ-ONLY. It never writes a .city file.",
         ],
