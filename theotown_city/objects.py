@@ -1,29 +1,44 @@
 """Object parsing for the main City object.
 
-The binary format uses a string table: every new string (key or
-value) is stored once, in order, and later uses are a 1-byte
-reference (tag 0x14 for keys, 0x17 for values) or a 2-byte
-reference (tag 0x15). Tag 0x18 is a short string (1-byte length).
+The binary format is the binary JSON of the game's own library,
+``io.blueflower.stapel2d.util.json`` (BinaryJsonReader /
+BinaryJsonWriter, confirmed by decompiling TheoTown 1.12.88a).
+Token table (from BinaryJsonReader / BinaryJsonWriter):
+- 1 array start, 2 array end, 3 object start, 4 object end
+- 5 name (string() encoding), 6 string value (string() encoding)
+- 7 float32, 8 int32, 9 int64, 11 boolean (1 byte), 12 null,
+  14 int16, 15 int8, 16 float64, 17 true, 18 false
+- 19 new name string (readUTF, added to the pool),
+  20 name ref (1-byte index), 21 name ref (2-byte index)
+- 22 new string value (readUTF, added to the pool),
+  23 string ref (1-byte index), 24 string ref (2-byte index)
+- 0x80-0xff tiny int: the token byte itself is the value,
+  decodeTinyInt = ((byte)(token << 1)) >> 1, range -64..63
+  (only when the writer's USE_TINY_INT_ENCODING flag is on)
 
-A linear scan first builds that table. A recursive parser then
-reads values with it, so a reference id means the same thing in
-every file even though the numbers change between files.
+Names and string values share one pool: every new string is
+stored once, in order, and later uses are a reference. The writer
+uses tokens 19-24 for strings, never 5/6, in the .city files seen
+so far; 5/6 are handled anyway for completeness.
 
-Objects (tag 0x03) come in two shapes:
-- plain maps: fields are key + value, e.g. ground tiles {'j': 31, 'f': 8}
-- class objects: a 0x14 marker, then an unnamed type string, then
-  key + value fields, e.g. trees/roads/buildings
-  {'_type': '$road00', 'x': 39, 'y': 223, ...}
-The two are told apart by what follows the 0x14 marker: a type
-string means class object, a value tag means the marker was a key.
+Objects are plain maps: fields are name + value. A tree / road /
+building object has an ``id`` field first (the draft id, e.g.
+``$road00``). Trees whose draft is the default ``$tree00`` have
+no ``id`` field at all — the writer omits it (Tree.save) and the
+reader defaults to ``$tree00``.
 """
 import struct
 from collections import Counter
 
 from .format import find_section, s8
 
-_VALUE_TAGS = (0x01, 0x03, 0x07, 0x08, 0x09, 0x0E, 0x0F, 0x11, 0x12, 0x13,
-               0x14, 0x15, 0x16, 0x17, 0x18)
+
+def _tiny(token):
+    """Decode a tiny-int token byte to its value (-64..63)."""
+    v = (token << 1) & 0xFF
+    if v >= 128:
+        v -= 256
+    return v // 2
 
 
 def build_string_table(dec, off):
@@ -44,16 +59,22 @@ def build_string_table(dec, off):
             i += 2
         elif t in (0x14, 0x17):
             i += 2
-        elif t == 0x15:
+        elif t in (0x15, 0x18):
             i += 3
-        elif t == 0x18:
-            ln = dec[i + 1]
-            strings.append(dec[i + 2:i + 2 + ln].decode("utf-8", "replace"))
-            i += 2 + ln
+        elif t in (0x05, 0x06):
+            # string(): 0 = new string (readUTF), else 2-byte index.
+            if dec[i + 1] == 0:
+                ln = struct.unpack(">H", dec[i + 2:i + 4])[0]
+                strings.append(dec[i + 4:i + 4 + ln].decode("utf-8", "replace"))
+                i += 4 + ln
+            else:
+                i += 3
         elif t in (0x13, 0x16):
             ln = struct.unpack(">H", dec[i + 1:i + 3])[0]
             strings.append(dec[i + 3:i + 3 + ln].decode("utf-8", "replace"))
             i += 3 + ln
+        elif t >= 0x80:
+            i += 1  # tiny int: the token byte is the whole value
         else:
             break
     return strings
@@ -69,6 +90,16 @@ class Parser:
     def _str(self, idx):
         return self.strings[idx] if 0 <= idx < len(self.strings) else f"<str#{idx}>"
 
+    def _string_encoding(self, i):
+        """Token 5/6: 0 = new readUTF string, else 2-byte pool index."""
+        b = self.dec[i + 1]
+        if b == 0:
+            ln = struct.unpack(">H", self.dec[i + 2:i + 4])[0]
+            s = self.dec[i + 4:i + 4 + ln].decode("utf-8", "replace")
+            return s, i + 4 + ln
+        idx = ((b - 1) * 256) + self.dec[i + 2]
+        return self._str(idx), i + 3
+
     def parse(self, i):
         dec = self.dec
         t = dec[i]
@@ -79,20 +110,10 @@ class Parser:
                 v, i = self.parse(i)
                 arr.append(v)
             return arr, i + 1
-        if t == 0x03:  # object
+        if t == 0x03:  # object: fields are name + value, until 0x04
             obj = {}
             i += 1
-            # Class marker? 03 14 <id> followed by a type string.
-            if (dec[i] == 0x14 and i + 2 < len(dec)
-                    and dec[i + 2] in (0x16, 0x17)):
-                obj["_class_ref"] = self._str(dec[i + 1])
-                i += 2
             while dec[i] != 0x04:
-                if dec[i] in (0x16, 0x17, 0x18):
-                    # Unnamed type value, e.g. a tree/road/building id.
-                    v, i = self.parse(i)
-                    obj["_type"] = v
-                    continue
                 if dec[i] == 0x13:
                     ln = struct.unpack(">H", dec[i + 1:i + 3])[0]
                     key = dec[i + 3:i + 3 + ln].decode("utf-8", "replace")
@@ -103,6 +124,8 @@ class Parser:
                 elif dec[i] == 0x15:
                     key = self._str(struct.unpack(">H", dec[i + 1:i + 3])[0])
                     i += 3
+                elif dec[i] == 0x05:
+                    key, i = self._string_encoding(i)
                 else:
                     raise ValueError(f"bad key tag {hex(dec[i])} at {i}")
                 v, i = self.parse(i)
@@ -119,15 +142,14 @@ class Parser:
         if t == 0x0F:
             return s8(dec[i + 1]), i + 2
         if t == 0x11:
-            return True, i + 1
+            return dec[i + 1] > 0, i + 2
         if t == 0x12:
-            return False, i + 1
+            return None, i + 1
         if t in (0x13, 0x16):
             ln = struct.unpack(">H", dec[i + 1:i + 3])[0]
             return dec[i + 3:i + 3 + ln].decode("utf-8", "replace"), i + 3 + ln
-        if t == 0x18:
-            ln = dec[i + 1]
-            return dec[i + 2:i + 2 + ln].decode("utf-8", "replace"), i + 2 + ln
+        if t in (0x05, 0x06):
+            return self._string_encoding(i)
         if t == 0x17:
             return self._str(dec[i + 1]), i + 2
         if t == 0x14:
@@ -135,6 +157,15 @@ class Parser:
         if t == 0x15:
             idx = struct.unpack(">H", dec[i + 1:i + 3])[0]
             return {"$ref": self._str(idx)}, i + 3
+        if t == 0x18:
+            idx = struct.unpack(">H", dec[i + 1:i + 3])[0]
+            return self._str(idx), i + 3
+        if t == 0x10:
+            # Not used by the binary writer; kept so a stray token
+            # does not break the scan (treated as a 1-byte value).
+            return dec[i + 1], i + 2
+        if t >= 0x80:
+            return _tiny(t), i + 1
         raise ValueError(f"bad value tag {hex(t)} at {i}")
 
 
@@ -149,7 +180,11 @@ def parse_section(dec, key, strings):
 
 
 def _summarise(items):
-    """Count objects by type and find their x/y range."""
+    """Count objects by type (their 'id' field) and find x/y range.
+
+    Objects with no 'id' are default trees ($tree00) — the writer
+    omits the id for them, so they are counted as '<no id>'.
+    """
     if not isinstance(items, list):
         return {"count": 0, "by_type": {}, "x_range": None, "y_range": None}
     by_type = Counter()
@@ -157,7 +192,7 @@ def _summarise(items):
     for it in items:
         if not isinstance(it, dict):
             continue
-        by_type[it.get("_type", "<no type>")] += 1
+        by_type[it.get("id", "<no id>")] += 1
         if isinstance(it.get("x"), int):
             xs.append(it["x"])
         if isinstance(it.get("y"), int):
@@ -200,3 +235,31 @@ def parse_objects(dec, strings):
         "rails": rails,
         "rails_summary": _summarise(rails),
     }
+
+
+def parse_heights(dec, strings):
+    """Reconstruct terrain heights from the delta-encoded arrays.
+
+    The writer stores running differences (GroundLoader.saveTag):
+    each stored value is height minus the previous height, in
+    stored order, starting from 0. 'heights' and 'heightsDY' are
+    stored row-major (y outer, x inner); 'heightsDX' is stored
+    column-major (x outer, y inner). Summing in stored order gives
+    the real heights back.
+    Returns {name: {'count': n, 'min': m, 'max': m}}.
+    """
+    out = {}
+    for name in ("heights", "heightsDX", "heightsDY"):
+        vals = parse_section(dec, name, strings)
+        if not isinstance(vals, list):
+            continue
+        total = 0
+        lo = hi = None
+        for v in vals:
+            if not isinstance(v, int):
+                continue
+            total += v
+            lo = total if lo is None or total < lo else lo
+            hi = total if hi is None or total > hi else hi
+        out[name] = {"count": len(vals), "min": lo, "max": hi}
+    return out

@@ -9,7 +9,7 @@ Split into small modules:
 - cli: command-line interface
 """
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __all__ = ["load_city", "analyse", "export_images", "export_overlay"]
 
 from .format import load_city

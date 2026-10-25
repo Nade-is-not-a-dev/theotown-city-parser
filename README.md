@@ -47,13 +47,36 @@ gzip payload:
 The JSON header is plain text and holds the seed, size, version, game mode,
 money, habitants, and the plugins used.
 
-The main object uses a tagged binary format. Every new string is
-stored once, in order, and later uses are a 1-byte reference
-(tag `0x14` for keys, `0x17` for values) or a 2-byte reference
-(tag `0x15`); tag `0x18` is a short string. The parser in
-`objects.py` first builds that string table, then reads objects
-with it — that is how trees, roads and buildings are decoded,
-and why reference ids differ between files.
+The main object uses the binary JSON of the game's own library,
+`io.blueflower.stapel2d.util.json` (`BinaryJsonReader` /
+`BinaryJsonWriter`), confirmed by decompiling TheoTown 1.12.88a.
+Token table: 1 array start, 2 array end, 3 object start,
+4 object end, 7 float32, 8 int32, 9 int64, 11 boolean (1 byte),
+12 null, 14 int16, 15 int8, 16 float64, 17 true, 18 false.
+Names use tokens 19 (new string), 20 (1-byte ref), 21 (2-byte
+ref); string values use 22, 23, 24 the same way. Names and
+values share one pool: every new string is stored once, in
+order, and later uses are a reference. Tokens 0x80-0xff are
+tiny ints (the byte itself is the value, -64..63). The parser
+in `objects.py` first builds that string table, then reads
+objects with it — that is how trees, roads and buildings are
+decoded, and why reference ids differ between files.
+
+Field meanings (from the game's loaders / object classes):
+- Ground tile: `j` = index into `ground type arr` (omitted when
+  0 = `$ground00`), `f` = frame. Heights are delta-encoded:
+  each stored value is the difference from the previous tile.
+- Tree: `id` (draft, omitted when it is the default `$tree00`),
+  `f` = frame, `x`, `y`.
+- Road: `id`, `f` = frame (frame % 64), `x`, `y`, `ta` = traffic
+  amount / 100, `taa` = [traffic level 1/2/3] / 100, `ctr` = car
+  counter, `cctr` = chargeable car counter, `lvl` = level,
+  `dlvl` = dLevel. Other fields exist for bridges, traffic
+  lights, decorations, etc. (see `Road.java` in the APK).
+- The file is loaded by `CityKeeper`: header JSON, gzip,
+  minimap, preview, then the main object, dispatched by section
+  tag to one loader per section (`GroundLoader`, `TreeLoader`,
+  `RoadLoader`, ...).
 
 ## Colour gotcha: pixels are A,B,G,R
 
@@ -70,7 +93,7 @@ and B (`format.correct_rgba`), so the exported PNGs match the game.
 Water share from the corrected minimap also matches the `$water00`
 tile count for every map tested.
 
-## What it does (v1.2)
+## What it does (v1.3)
 
 - Header JSON, money, seed, size, version, id, timestamps
 - Minimap + preview PNG export, in true colours

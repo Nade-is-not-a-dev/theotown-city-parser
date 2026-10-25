@@ -21,7 +21,7 @@ def _print_info(r, f):
     print(f"  taxes: {r['taxes_0_to_8']}")
     print(f"  terrain: {r['minimap_stats']['terrain_classes_pct']}")
     print(f"  ground types: {r['ground_types_from_ground_arr']}")
-    print(f"  heights: { {k: (v['count'], v['min'], v['max'], v['int16_entries']) for k, v in r['heights_arrays'].items()} }")
+    print(f"  heights (reconstructed from deltas): { {k: (v['count'], v['min'], v['max']) for k, v in r['heights_arrays'].items()} }")
     print(f"  approx: {r['approx_counts_heuristic']}")
     for name in ["trees", "roads", "buildings", "rails", "bus_stops"]:
         print(f"  {name}: {r['objects'][name + '_summary']}")
@@ -41,7 +41,7 @@ def _write_report(files, out):
         lines.append(f"- Taxes 0-8: `{r['taxes_0_to_8']}`\n")
         lines.append(f"- Terrain (true colours, A,B,G,R): `{r['minimap_stats']['terrain_classes_pct']}`\n")
         lines.append(f"- Ground types from ground arr: `{r['ground_types_from_ground_arr']}`\n")
-        lines.append(f"- Heights: `{ {k: (v['count'], v['min'], v['max'], v['int16_entries']) for k, v in r['heights_arrays'].items()} }`\n")
+        lines.append(f"- Heights (reconstructed from deltas): `{ {k: (v['count'], v['min'], v['max']) for k, v in r['heights_arrays'].items()} }`\n")
         lines.append(f"- Approx (heuristic): `{r['approx_counts_heuristic']}`\n")
         for name in ["trees", "roads", "buildings", "rails", "bus_stops"]:
             lines.append(f"- {name}: `{r['objects'][name + '_summary']}`\n")

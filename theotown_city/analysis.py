@@ -6,9 +6,9 @@ With the raw A,R,G,B reading, water and sand are swapped.
 import colorsys
 from collections import Counter
 
-from .format import find_key_value, find_section, load_city, parse_tagged_int_array
+from .format import find_key_value, find_section, load_city
 from .ground import parse_ground_types
-from .objects import build_string_table, parse_objects
+from .objects import build_string_table, parse_heights, parse_objects
 
 
 def classify_terrain(r, g, b):
@@ -47,41 +47,9 @@ def minimap_stats(minimap, w, h):
     }
 
 
-def _heights(dec):
-    """Parse heights / heightsDX / heightsDY arrays (raw tagged values)."""
-    out = {}
-    for key in ["heights", "heightsDX", "heightsDY"]:
-        vals, n16, _ = parse_tagged_int_array(dec, key)
-        if not vals:
-            continue
-        # Positions of int16 entries: row starts are at multiples of 256.
-        i = find_section(dec, key)
-        idx = i + 3 + len(key) + 1
-        pos = []
-        n = 0
-        while n < len(vals) and idx < len(dec):
-            tag = dec[idx]
-            if tag == 0x0F:
-                idx += 2
-                n += 1
-            elif tag == 0x0E:
-                pos.append(n)
-                idx += 3
-                n += 1
-            else:
-                break
-        out[key] = {
-            "count": len(vals),
-            "int16_entries": n16,
-            "min": min(vals),
-            "max": max(vals),
-            "mean": round(sum(vals) / len(vals), 3),
-            "int16_positions_first10": pos[:10],
-            "int16_positions_all_multiple_of_256": (
-                all(p % 256 == 0 for p in pos) if pos else None
-            ),
-        }
-    return out
+def _heights(dec, strings):
+    """Reconstruct heights from the delta-encoded arrays (see objects.py)."""
+    return parse_heights(dec, strings)
 
 
 def analyse(path):
@@ -138,15 +106,17 @@ def analyse(path):
         "main_object_scalars": scalars,
         "taxes_0_to_8": taxes,
         "sections_offsets_in_decompressed": sections,
-        "heights_arrays": _heights(dec),
+        "heights_arrays": _heights(dec, strings),
         "approx_counts_heuristic": approx,
         "ground_types_from_ground_arr": parse_ground_types(dec, strings),
         "objects": objects,
         "notes": [
             "Header money should match budget.estate in the main object.",
-            "Heights look delta-encoded per row; int16 entries at multiples of 256 are likely row-start absolute heights — hypothesis, not verified.",
-            "Trees/roads/buildings are fully parsed (type, x, y) via the string-table parser in objects.py. "
-            "88 tree entries in the test city have no type string, only f/x/y — reported as '<no type>'.",
+            "Heights are delta-encoded (GroundLoader.saveTag): each stored value is the difference from the previous tile, summed in stored order. "
+            "Trees with no 'id' are the default draft $tree00 (Tree.save omits the id). "
+            "Road fields: f/frame (frame index, % 64), ta = traffic amount / 100, taa = [traffic level 1/2/3] / 100, ctr = car counter, cctr = chargeable car counter, lvl = level, dlvl = dLevel.",
+            "Trees/roads/buildings are fully parsed (id, x, y) via the string-table parser in objects.py. "
+            "Tree entries with no 'id' are the default draft $tree00.",
             "Minimap/preview pixels are A,B,G,R, not A,R,G,B. Yellow in the raw reading is water, blue in the raw reading is sand/land.",
             "This tool is READ-ONLY. It never writes a .city file.",
         ],
