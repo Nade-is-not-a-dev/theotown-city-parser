@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.city
+*.save
+*.backup
+out/
+report.md
+*.egg-info/
+dist/
+build/
+.venv/
